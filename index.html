@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Final Cut</title>
+  <meta name="description" content="Put the movies up on the wall. Take turns cutting one each. The last poster standing is what you watch tonight.">
+  <meta name="theme-color" content="#12141c">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='10' fill='%2312141c'/%3E%3Crect x='14' y='10' width='36' height='44' rx='3' fill='%23f2b84b'/%3E%3Cpath d='M10 40 54 22' stroke='%23e5493d' stroke-width='7' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800;900&family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=DM+Mono:wght@500&display=swap">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="wrap">
+    <header class="marquee">
+      <h1>Final <span>Cut</span></h1>
+      <p>Put the movies up on the wall. Take turns cutting one each. The last poster standing is what you watch tonight.</p>
+      <div class="marquee-row">
+        <div id="status">Loading…</div>
+        <div class="room-tools" id="roomTools" hidden>
+          <button class="btn small" id="inviteBtn" type="button">Invite</button>
+          <button class="btn small ghost" id="leaveBtn" type="button">Leave room</button>
+        </div>
+      </div>
+    </header>
+
+    <div id="banner" class="banner" hidden></div>
+
+    <!-- Landing: name + create / join -->
+    <section id="landing" class="landing" hidden>
+      <form id="nameForm" class="panel" autocomplete="off">
+        <label class="label" for="nameInput">Your name</label>
+        <input id="nameInput" maxlength="24" placeholder="What your friends call you" required>
+        <div class="split">
+          <button class="btn primary" type="submit" id="createBtn">Start a room</button>
+          <span class="or">or join one</span>
+          <div class="join">
+            <input id="codeInput" maxlength="4" placeholder="CODE" aria-label="Room code" autocapitalize="characters">
+            <button class="btn" type="button" id="joinBtn">Join</button>
+          </div>
+        </div>
+      </form>
+    </section>
+
+    <!-- Room -->
+    <section id="room" class="room" hidden>
+      <section aria-labelledby="castLabel">
+        <h2 class="label" id="castLabel">Tonight's crew</h2>
+        <div class="cast" id="cast"></div>
+      </section>
+
+      <section id="feature" hidden></section>
+
+      <section id="addSection" aria-labelledby="addLabel" hidden>
+        <h2 class="label" id="addLabel">Add to the lineup</h2>
+        <div class="search">
+          <input id="searchInput" maxlength="80" placeholder="Search for a movie" aria-label="Search for a movie" autocomplete="off">
+          <ul class="results" id="results" hidden></ul>
+        </div>
+      </section>
+
+      <section aria-labelledby="wallLabel">
+        <h2 class="label" id="wallLabel">The wall</h2>
+        <div class="grid" id="grid"></div>
+        <div class="empty" id="empty" hidden></div>
+      </section>
+    </section>
+
+    <footer class="credits">
+      <span>Movie data and posters from <a href="https://www.themoviedb.org/" target="_blank" rel="noopener">TMDB</a>.</span>
+      <span>This product uses the TMDB API but is not endorsed or certified by TMDB.</span>
+    </footer>
+  </div>
+
+  <div class="dock" id="dock" hidden><div class="dock-in"><div class="dock-msg" id="dockMsg"></div><div class="dock-act" id="dockAct"></div></div></div>
+  <div class="toast" id="toast" role="status" hidden></div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

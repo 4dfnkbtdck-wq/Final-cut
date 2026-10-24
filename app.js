@@ -1,0 +1,465 @@
+import { TMDB_API_KEY, FIREBASE_CONFIG } from "./config.js";
+
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const hashHue = (s) => { let h = 0; for (const c of String(s)) h = (h * 31 + c.charCodeAt(0)) >>> 0; return h % 360; };
+const store = {
+  get: (k) => { try { return localStorage.getItem(k); } catch { return null; } },
+  set: (k, v) => { try { localStorage.setItem(k, v); } catch { /* private mode */ } },
+};
+
+const params = new URLSearchParams(location.search);
+const DEMO = params.has("demo");
+const TMDB = "https://api.themoviedb.org/3";
+const IMG = "https://image.tmdb.org/t/p/";
+const BLANK_GAME = { phase: "lobby", order: [], turn: 0, cuts: {}, pool: [], round: 0, winner: null };
+const CODE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ";
+
+/* ================= Backends ================= */
+
+// Firebase Realtime Database, loaded from Google's CDN on demand.
+async function firebaseBackend(cfg) {
+  const base = "https://www.gstatic.com/firebasejs/10.12.2/";
+  const [{ initializeApp }, rtdb, { getAuth, signInAnonymously }] = await Promise.all([
+    import(base + "firebase-app.js"), import(base + "firebase-database.js"), import(base + "firebase-auth.js"),
+  ]);
+  const app = initializeApp(cfg);
+  const cred = await signInAnonymously(getAuth(app));
+  const db = rtdb.getDatabase(app);
+  const r = (p) => rtdb.ref(db, p);
+  return {
+    uid: cred.user.uid,
+    watch: (p, cb, onError) => rtdb.onValue(r(p), (s) => cb(s.val()), onError),
+    get: async (p) => (await rtdb.get(r(p))).val(),
+    set: (p, v) => rtdb.set(r(p), v),
+    update: (p, v) => rtdb.update(r(p), v),
+    remove: (p) => rtdb.remove(r(p)),
+    txn: async (p, fn) => (await rtdb.runTransaction(r(p), fn)).committed,
+  };
+}
+
+// Same interface, kept in this browser's localStorage. Each tab is its own player,
+// so you can try a full game with a few tabs side by side.
+function demoBackend() {
+  const KEY = "final-cut-demo";
+  let uid = sessionStorage.getItem("fc-demo-uid");
+  if (!uid) { uid = "demo" + Math.random().toString(36).slice(2, 8); sessionStorage.setItem("fc-demo-uid", uid); }
+  const clone = (v) => (v == null ? null : JSON.parse(JSON.stringify(v)));
+  const load = () => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch { return {}; } };
+  const at = (o, p) => p.split("/").reduce((a, k) => (a == null ? a : a[k]), o);
+  const put = (o, p, v) => {
+    const ks = p.split("/"); let a = o;
+    for (const k of ks.slice(0, -1)) { if (typeof a[k] !== "object" || a[k] === null) a[k] = {}; a = a[k]; }
+    if (v == null) delete a[ks.at(-1)]; else a[ks.at(-1)] = clone(v);
+  };
+  const subs = new Set();
+  const fire = () => { const o = load(); subs.forEach((s) => s.cb(clone(at(o, s.path)) ?? null)); };
+  const save = (o) => { localStorage.setItem(KEY, JSON.stringify(o)); fire(); };
+  addEventListener("storage", (e) => { if (e.key === KEY) fire(); });
+  return {
+    uid,
+    watch(path, cb) { const s = { path, cb }; subs.add(s); setTimeout(() => cb(clone(at(load(), path)) ?? null)); return () => subs.delete(s); },
+    get: async (p) => clone(at(load(), p)) ?? null,
+    async set(p, v) { const o = load(); put(o, p, v); save(o); },
+    async update(p, v) { const o = load(); for (const [k, val] of Object.entries(v)) put(o, p + "/" + k, val); save(o); },
+    async remove(p) { const o = load(); put(o, p, null); save(o); },
+    async txn(p, fn) { const o = load(); const res = fn(clone(at(o, p)) ?? null); if (res === undefined) return false; put(o, p, res); save(o); return true; },
+  };
+}
+
+/* ================= TMDB ================= */
+
+async function tmdb(path, query = {}) {
+  const u = new URL(TMDB + path);
+  u.searchParams.set("api_key", TMDB_API_KEY);
+  for (const [k, v] of Object.entries(query)) u.searchParams.set(k, v);
+  const res = await fetch(u);
+  if (!res.ok) throw new Error("TMDB " + res.status);
+  return res.json();
+}
+const poster = (path, size = "w342") => (path ? IMG + size + path : "");
+
+/* ================= State ================= */
+
+let be = null, me = null, code = null, unwatch = null;
+let room = null;          // raw room snapshot
+let pending = null, busy = false, searchSeq = 0;
+const seenCuts = new Set();
+
+const myName = () => store.get("fc-name") || "";
+const movies = () => Object.entries(room?.movies || {}).map(([id, m]) => ({ id, ...m })).sort((a, b) => (a.addedAt || 0) - (b.addedAt || 0));
+const players = () => Object.entries(room?.players || {}).map(([id, p]) => ({ id, ...p })).sort((a, b) => (a.joinedAt || 0) - (b.joinedAt || 0));
+const game = () => ({ ...BLANK_GAME, ...(room?.game || {}) });
+const byId = (id) => (room?.movies?.[id] ? { id, ...room.movies[id] } : null);
+const inPlay = () => (game().phase === "lobby" ? movies() : (game().pool || []).map(byId).filter(Boolean));
+const remaining = () => inPlay().filter((m) => !game().cuts?.[m.id]);
+const order = () => game().order || [];
+const turnPlayer = () => (order().length ? order()[(game().turn || 0) % order().length] : null);
+const joined = () => !!room?.players?.[me];
+const myTurn = () => game().phase === "playing" && joined() && (turnPlayer() === me || !turnPlayer());
+const nameOf = (id, fallback) => (id === me ? "You" : room?.players?.[id]?.name || fallback || "Someone");
+
+/* ================= UI helpers ================= */
+
+function toast(msg) {
+  const t = $("#toast"); t.textContent = msg; t.hidden = false;
+  clearTimeout(toast.t); toast.t = setTimeout(() => (t.hidden = true), 3800);
+}
+async function guard(fn) {
+  if (busy) return;
+  busy = true; render();
+  try { await fn(); } catch (e) { console.error(e); toast("That didn't save. Check your connection and try again."); }
+  finally { busy = false; render(); }
+}
+function setURL(c) {
+  const u = new URL(location.href);
+  if (c) u.searchParams.set("room", c); else u.searchParams.delete("room");
+  history.replaceState(null, "", u);
+}
+function inviteLink() {
+  const u = new URL(location.href); u.search = "";
+  if (DEMO) u.searchParams.set("demo", "");
+  u.searchParams.set("room", code);
+  return u.toString().replace("demo=&", "demo&");
+}
+
+/* ================= Render ================= */
+
+function posterHTML(m, index = 0) {
+  if (m.poster) return `<img alt="" src="${esc(poster(m.poster))}" loading="lazy">`;
+  const len = String(m.title).length;
+  const fs = len <= 6 ? 40 : len <= 12 ? 32 : len <= 20 ? 26 : len <= 32 ? 21 : 17;
+  return `<div class="art" style="--h:${hashHue(m.title)};--fs:${fs}px">
+    <span class="reel">REEL ${String(index + 1).padStart(2, "0")}${m.year ? " · " + esc(m.year) : ""}</span>
+    <span class="ptitle">${esc(m.title)}</span></div>`;
+}
+
+function render() {
+  const inRoom = !!code;
+  $("#landing").hidden = inRoom;
+  $("#room").hidden = !inRoom;
+  $("#roomTools").hidden = !inRoom;
+  $("#dock").hidden = !inRoom;
+  if (!inRoom) { $("#status").textContent = DEMO ? "Demo mode · this device only" : "Ready when you are"; return; }
+  if (!room) { $("#status").innerHTML = `Room <span class="code">${esc(code)}</span> · connecting…`; return; }
+
+  const g = game(), list = inPlay(), cuts = g.cuts || {}, rem = remaining();
+  const tail = g.phase === "lobby" ? `${list.length} movie${list.length === 1 ? "" : "s"} · ${players().length} in the crew`
+    : g.phase === "playing" ? `Round ${g.round || 1} · ${rem.length} of ${list.length} left`
+    : `Round ${g.round || 1} · decided`;
+  $("#status").innerHTML = `Room <span class="code">${esc(code)}</span> · ${esc(tail)}`;
+
+  // crew
+  const ids = g.phase === "lobby" ? players().map((p) => p.id) : [...order(), ...players().map((p) => p.id).filter((p) => !order().includes(p))];
+  const tp = turnPlayer();
+  $("#cast").innerHTML = ids.map((id) => {
+    const benched = g.phase !== "lobby" && !order().includes(id);
+    const gone = !room.players?.[id];
+    const name = nameOf(id);
+    const ord = g.phase === "playing" && !benched ? `<span class="ord">${order().indexOf(id) + 1}</span>` : "";
+    const note = benched ? ' <span class="ord">next round</span>' : gone ? ' <span class="ord">left</span>' : "";
+    return `<span class="chip${g.phase === "playing" && id === tp ? " turn" : ""}"><span class="dot" style="--h:${hashHue(id)}">${esc((room.players?.[id]?.name || "?")[0].toUpperCase())}</span>${ord}<span class="nm">${esc(name)}</span>${note}</span>`;
+  }).join("") + (joined() ? "" : `<button class="btn primary small" data-act="join">Join the crew</button>`);
+
+  // add
+  $("#addSection").hidden = g.phase !== "lobby";
+
+  // winner
+  const feat = $("#feature");
+  const win = g.phase === "done" ? byId(g.winner) || rem[0] : null;
+  if (win) {
+    const log = Object.entries(cuts).sort((a, b) => a[1].n - b[1].n).map(([id, c]) =>
+      `<li><span class="n">${c.n}</span><span><b>${esc(byId(id)?.title || "A removed movie")}</b>, cut by ${esc(nameOf(c.by, c.name))}</span></li>`).join("");
+    feat.hidden = false;
+    feat.innerHTML = `<div class="feature">
+      <div class="poster-slot"><div class="poster">${posterHTML(win)}</div></div>
+      <div style="min-width:0">
+        <div class="eyebrow">Tonight's feature</div>
+        <h2>${esc(win.title)}</h2>
+        <p>${[win.year, win.director, win.runtime ? win.runtime + " min" : ""].filter(Boolean).map(esc).join(" · ") || "Last one standing."}</p>
+        ${win.overview ? `<p class="overview">${esc(win.overview)}</p>` : ""}
+        <span class="label" style="margin-top:14px">Cutting-room log</span>
+        <ol class="log">${log}</ol>
+      </div></div>`;
+  } else feat.hidden = true;
+
+  // wall
+  const grid = $("#grid"), empty = $("#empty");
+  const live = myTurn() && !busy;
+  if (!list.length) {
+    grid.innerHTML = "";
+    empty.hidden = false;
+    empty.innerHTML = "<strong>The wall is empty</strong>Search for a movie above. Anyone in the room can add more.";
+  } else {
+    empty.hidden = true;
+    grid.innerHTML = list.map((m, i) => {
+      const c = cuts[m.id];
+      const fresh = c && !seenCuts.has(m.id);
+      const cls = ["card", c ? "cut" : "", fresh ? "fresh" : "", !c && live ? "live" : "idle", pending === m.id ? "pending" : ""].filter(Boolean).join(" ");
+      const sub = [m.year, m.runtime ? m.runtime + " min" : ""].filter(Boolean).join(" · ");
+      return `<article class="${cls}">
+        <button class="poster" type="button" data-pick="${m.id}" aria-label="${esc(c ? m.title + ", cut" : live ? "Cut " + m.title : m.title)}" ${!c && live ? "" : 'tabindex="-1"'}>
+          ${posterHTML(m, i)}
+          <span class="stamp">Cut${c ? `<small>#${c.n} · ${esc(nameOf(c.by, c.name))}</small>` : ""}</span>
+        </button>
+        <div class="confirm"><p>Cut ${esc(m.title)}?</p>
+          <button class="btn danger" type="button" data-cut="${m.id}">Cut it</button>
+          <button class="btn keep" type="button" data-keep>Keep</button></div>
+        <div class="meta"><b>${esc(m.title)}</b><span>${esc(sub) || "&nbsp;"}</span></div>
+        ${g.phase === "lobby" ? `<div class="tools"><button type="button" data-remove="${m.id}">Remove</button></div>` : ""}
+      </article>`;
+    }).join("");
+    grid.querySelectorAll("img").forEach((img) => img.addEventListener("error", () => {
+      const m = byId(img.closest(".card")?.querySelector("[data-pick]")?.dataset.pick);
+      if (m) img.outerHTML = posterHTML({ ...m, poster: null });
+    }, { once: true }));
+  }
+  Object.keys(cuts).forEach((id) => seenCuts.add(id));
+  renderDock();
+}
+
+function renderDock() {
+  const dock = $("#dock"), g = game();
+  dock.classList.remove("myturn");
+  let title = "", sub = "", buttons = "";
+  if (g.phase === "lobby") {
+    const n = movies().length;
+    title = n < 2 ? "Add at least 2 movies" : `${n} movies ready`;
+    sub = joined() ? "Start when everyone's in. Turn order is shuffled." : "Join the crew to take part.";
+    buttons = `<button class="btn primary" data-act="start" ${n < 2 || busy ? "disabled" : ""}>Start cutting</button>`;
+  } else if (g.phase === "playing") {
+    const tp = turnPlayer(), left = remaining().length;
+    if (myTurn()) { dock.classList.add("myturn"); title = "Your cut"; sub = `Tap a poster to cut it. ${left} left.`; }
+    else { title = tp ? `${nameOf(tp)}'s cut` : "Anyone's cut"; sub = joined() ? `${left} left. Hang tight.` : `${left} left. You'll play next round.`; }
+    if (joined()) buttons = `${tp && tp !== me ? `<button class="btn" data-act="skip">Skip ${esc(nameOf(tp))}</button>` : ""}<button class="btn" data-act="lobby">End round</button>`;
+  } else {
+    const w = byId(g.winner) || remaining()[0];
+    title = w ? `Watch ${w.title}` : "Round over";
+    sub = "Enjoy the movie. The lineup stays for next time.";
+    buttons = `<button class="btn primary" data-act="again">Play again</button>${w ? `<button class="btn" data-act="watched">Remove it &amp; play again</button>` : ""}`;
+  }
+  $("#dockMsg").innerHTML = `<b>${esc(title)}</b><span>${esc(sub)}</span>`;
+  $("#dockAct").innerHTML = buttons;
+}
+
+/* ================= Search ================= */
+
+async function search(q) {
+  const seq = ++searchSeq, box = $("#results");
+  q = q.trim();
+  if (!q) { box.hidden = true; box.innerHTML = ""; return; }
+  const custom = `<li><button type="button" data-custom="${esc(q)}"><span class="thumb"></span><span class="t"><b>Add “${esc(q)}”</b><span>without a poster</span></span><span class="add">Add</span></button></li>`;
+  if (!TMDB_API_KEY) { box.hidden = false; box.innerHTML = custom + `<li class="note">Add a TMDB key in config.js to search with posters.</li>`; return; }
+  let data;
+  try { data = await tmdb("/search/movie", { query: q, include_adult: "false" }); }
+  catch { if (seq === searchSeq) { box.hidden = false; box.innerHTML = `<li class="note">Search isn't working right now. Check the TMDB key in config.js.</li>` + custom; } return; }
+  if (seq !== searchSeq) return;
+  const have = room?.movies || {};
+  const rows = (data.results || []).slice(0, 8).map((r) => {
+    const on = !!have["t" + r.id];
+    const year = (r.release_date || "").slice(0, 4);
+    return `<li><button type="button" data-tmdb="${r.id}" ${on ? "disabled" : ""}>
+      ${r.poster_path ? `<img class="thumb" alt="" src="${esc(poster(r.poster_path, "w92"))}">` : '<span class="thumb"></span>'}
+      <span class="t"><b>${esc(r.title)}</b><span>${esc(year || "Year unknown")}</span></span>
+      <span class="add">${on ? "On the wall" : "Add"}</span></button></li>`;
+  });
+  box.hidden = false;
+  box.innerHTML = rows.length ? rows.join("") : `<li class="note">No movies match “${esc(q)}”.</li>` + custom;
+}
+
+async function addFromTmdb(id) {
+  clearSearch();
+  const key = "t" + id;
+  if (room?.movies?.[key]) return toast("That one's already on the wall.");
+  try {
+    const d = await tmdb(`/movie/${id}`, { append_to_response: "credits" });
+    const director = (d.credits?.crew || []).filter((c) => c.job === "Director").map((c) => c.name).slice(0, 2).join(" & ");
+    await be.set(`rooms/${code}/movies/${key}`, {
+      title: d.title, year: (d.release_date || "").slice(0, 4) || null, poster: d.poster_path || null,
+      runtime: d.runtime || null, director: director || null, overview: (d.overview || "").slice(0, 500) || null,
+      tmdbId: d.id, addedBy: me, addedAt: Date.now(),
+    });
+  } catch (e) { console.error(e); toast("Couldn't add that movie. Try again."); }
+}
+
+async function addCustom(title) {
+  clearSearch();
+  title = title.trim().replace(/\s+/g, " ").slice(0, 80);
+  if (!title) return;
+  if (movies().some((m) => m.title.toLowerCase() === title.toLowerCase())) return toast(`${title} is already on the wall.`);
+  const key = "c" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  await guard(() => be.set(`rooms/${code}/movies/${key}`, { title, addedBy: me, addedAt: Date.now() }));
+}
+
+function clearSearch() { $("#searchInput").value = ""; searchSeq++; $("#results").hidden = true; $("#results").innerHTML = ""; }
+
+/* ================= Game actions ================= */
+
+const roomPath = (p = "") => `rooms/${code}${p ? "/" + p : ""}`;
+const joinRoom = () => be.set(roomPath("players/" + me), { name: myName() || "Someone", joinedAt: Date.now() });
+
+const actions = {
+  join: () => guard(joinRoom),
+  start: () => guard(async () => {
+    if (movies().length < 2) return;
+    if (!joined()) await joinRoom();
+    const crew = [...new Set([...players().map((p) => p.id), me])];
+    for (let i = crew.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [crew[i], crew[j]] = [crew[j], crew[i]]; }
+    await be.set(roomPath("game"), { ...BLANK_GAME, phase: "playing", order: crew, pool: movies().map((m) => m.id), round: (game().round || 0) + 1, startedAt: Date.now() });
+  }),
+  skip: () => guard(() => be.txn(roomPath("game"), (g) => {
+    if (!g) return g;
+    if (g.phase !== "playing") return;
+    g.turn = (g.turn || 0) + 1; return g;
+  })),
+  lobby: () => guard(() => be.set(roomPath("game"), { ...BLANK_GAME, round: game().round || 0 })),
+  again: () => guard(() => be.set(roomPath("game"), { ...BLANK_GAME, round: game().round || 0 })),
+  watched: () => guard(async () => {
+    const w = game().winner;
+    await be.set(roomPath("game"), { ...BLANK_GAME, round: game().round || 0 });
+    if (w) await be.remove(roomPath("movies/" + w));
+  }),
+};
+
+async function cut(id) {
+  pending = null;
+  await guard(async () => {
+    const ok = await be.txn(roomPath("game"), (g) => {
+      if (!g) return g;
+      const ord = g.order || [];
+      const tp = ord.length ? ord[(g.turn || 0) % ord.length] : null;
+      g.cuts = g.cuts || {};
+      if (g.phase !== "playing" || (tp && tp !== me) || g.cuts[id]) return;
+      g.cuts[id] = { by: me, name: myName() || "Someone", n: Object.keys(g.cuts).length + 1, at: Date.now() };
+      g.turn = (g.turn || 0) + 1;
+      const left = (g.pool || []).filter((m) => !g.cuts[m]);
+      if (left.length <= 1) { g.phase = "done"; g.winner = left[0] || null; }
+      return g;
+    });
+    if (!ok) toast("Too late, the turn moved on.");
+  });
+}
+
+/* ================= Rooms ================= */
+
+function enterRoom(c) {
+  code = c; room = null; pending = null; seenCuts.clear();
+  setURL(c);
+  if (unwatch) unwatch();
+  let first = true;
+  unwatch = be.watch(roomPath(), (val) => {
+    if (first && (!val || !val.meta)) { first = false; leaveRoom(); toast(`There's no room with the code ${c}.`); return; }
+    if (first) { first = false; Object.keys(val.game?.cuts || {}).forEach((id) => seenCuts.add(id)); }
+    room = val || {};
+    if (pending && (room.game?.phase !== "playing" || room.game?.cuts?.[pending])) pending = null;
+    render();
+  }, (err) => { console.error(err); toast("Lost the connection to this room."); });
+  render();
+}
+
+function leaveRoom() {
+  if (unwatch) unwatch();
+  unwatch = null; code = null; room = null;
+  setURL(null); render();
+}
+
+async function createRoom() {
+  for (let tries = 0; tries < 8; tries++) {
+    const c = Array.from({ length: 4 }, () => CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)]).join("");
+    const ok = await be.txn(`rooms/${c}/meta`, (m) => (m ? undefined : { createdAt: Date.now(), createdBy: me }));
+    if (ok) { await be.set(`rooms/${c}/players/${me}`, { name: myName(), joinedAt: Date.now() }); return enterRoom(c); }
+  }
+  toast("Couldn't make a room. Try again.");
+}
+
+async function joinByCode(c) {
+  c = c.trim().toUpperCase();
+  if (!/^[A-Z]{4}$/.test(c)) return toast("Room codes are 4 letters.");
+  const meta = await be.get(`rooms/${c}/meta`);
+  if (!meta) return toast(`There's no room with the code ${c}.`);
+  await be.set(`rooms/${c}/players/${me}`, { name: myName() || "Someone", joinedAt: Date.now() });
+  enterRoom(c);
+}
+
+/* ================= Events ================= */
+
+function saveName() {
+  const n = $("#nameInput").value.trim().slice(0, 24);
+  if (!n) { $("#nameInput").focus(); toast("Add your name first."); return false; }
+  store.set("fc-name", n); return true;
+}
+
+$("#nameForm").addEventListener("submit", (e) => { e.preventDefault(); if (saveName()) createRoom().catch(failConn); });
+$("#joinBtn").addEventListener("click", () => { if (saveName()) joinByCode($("#codeInput").value).catch(failConn); });
+$("#codeInput").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $("#joinBtn").click(); } });
+$("#leaveBtn").addEventListener("click", async () => {
+  if (code && me && game().phase === "lobby") await be.remove(roomPath("players/" + me)).catch(() => {});
+  leaveRoom();
+});
+$("#inviteBtn").addEventListener("click", async () => {
+  const url = inviteLink();
+  if (navigator.share) { try { await navigator.share({ title: "Final Cut", text: `Join my Final Cut room: ${code}`, url }); return; } catch (e) { if (e.name === "AbortError") return; } }
+  try { await navigator.clipboard.writeText(url); toast(`Link copied. Room code ${code}.`); }
+  catch { toast(`Share this link: ${url}`); }
+});
+
+let debounce;
+$("#searchInput").addEventListener("input", (e) => { clearTimeout(debounce); const v = e.target.value; debounce = setTimeout(() => search(v), 250); });
+$("#searchInput").addEventListener("keydown", (e) => {
+  if (e.key === "Escape") clearSearch();
+  if (e.key === "Enter") { e.preventDefault(); $("#results button:not(:disabled)")?.click(); }
+});
+
+document.addEventListener("click", (e) => {
+  const t = e.target.closest("button");
+  if (!t || !code || !room) return;
+  const d = t.dataset;
+  if (d.act && actions[d.act]) return actions[d.act]();
+  if (d.tmdb) return addFromTmdb(d.tmdb);
+  if (d.custom !== undefined) return addCustom(d.custom);
+  if (d.pick) {
+    if (!myTurn() || game().cuts?.[d.pick]) return;
+    pending = pending === d.pick ? null : d.pick; render();
+    document.querySelector(`[data-cut="${d.pick}"]`)?.focus();
+    return;
+  }
+  if (d.cut) return cut(d.cut);
+  if ("keep" in d) { pending = null; return render(); }
+  if (d.remove) return guard(() => be.remove(roomPath("movies/" + d.remove)));
+});
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && pending) { pending = null; render(); } });
+document.addEventListener("pointerdown", (e) => { if (!e.target.closest(".search")) $("#results").hidden = true; });
+
+function failConn(e) { console.error(e); toast("Couldn't reach the room server. Check your connection."); }
+
+/* ================= Boot ================= */
+
+async function boot() {
+  $("#nameInput").value = myName();
+  const wanted = (params.get("room") || "").toUpperCase();
+  if (wanted) $("#codeInput").value = wanted;
+
+  if (!DEMO && !FIREBASE_CONFIG) {
+    const b = $("#banner"); b.hidden = false;
+    b.innerHTML = `<b>Almost ready.</b> Add your Firebase settings to <code>config.js</code> so friends can play together. Until then you can <a href="?demo">try the demo</a>, which runs on this device only (open a few tabs to play several people).`;
+    $("#landing").hidden = false; $("#createBtn").disabled = true; $("#joinBtn").disabled = true;
+    $("#status").textContent = "Setup needed";
+    return;
+  }
+  if (DEMO) { const b = $("#banner"); b.hidden = false; b.innerHTML = "<b>Demo mode.</b> Everything stays on this device. Open this page in a few tabs to play as several people."; }
+
+  try { be = DEMO ? demoBackend() : await firebaseBackend(FIREBASE_CONFIG); }
+  catch (e) {
+    console.error(e);
+    const b = $("#banner"); b.hidden = false;
+    b.innerHTML = "<b>Couldn't connect.</b> Check the Firebase settings in <code>config.js</code> and that Anonymous sign-in is turned on.";
+    $("#status").textContent = "Offline"; return;
+  }
+  me = be.uid;
+
+  if (wanted && myName()) {
+    try { await joinByCode(wanted); } catch (e) { failConn(e); render(); }
+  } else render();
+}
+
+boot();
