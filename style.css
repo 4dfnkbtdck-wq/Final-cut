@@ -198,6 +198,13 @@ input::placeholder { color: var(--muted); }
 .confirm .btn { width: 100%; max-width: 140px; }
 .confirm .btn.keep { background: transparent; color: #fff; border-color: rgb(255 255 255 / .5); }
 .card.pending .confirm { display: flex; }
+.card.myvote .poster { box-shadow: 0 0 0 3px var(--bulb), var(--shadow); }
+.vote-tag {
+  position: absolute; left: 8px; top: 8px;
+  background: var(--bulb); color: var(--bulb-ink);
+  font: 500 10px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase;
+  padding: 5px 7px; border-radius: 3px;
+}
 
 .empty { border: 1px dashed var(--line); border-radius: 6px; padding: 34px 20px; text-align: center; color: var(--muted); }
 .empty strong { display: block; font: 800 28px/1 var(--display); text-transform: uppercase; color: var(--fg); margin-bottom: 6px; }

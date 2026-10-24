@@ -6,10 +6,15 @@ standing is what you watch tonight.
 - The host starts a room and picks up to 100 movies, searching TMDB for real
   posters.
 - Friends join with the 4-letter code or the invite link and play on their
-  own phones. Every cut shows up for everyone live. Anyone who joins mid-round
-  goes to the back of the turn order.
-- Only the host adds or removes movies, starts and ends rounds, and skips
-  someone who's away.
+  own phones. Every cut shows up for everyone live.
+- Cuts are exactly equal. With 100 movies and 8 players everyone gets 12
+  cuts (96 in total). The last 4 then go to elimination votes: everyone
+  votes for the one they want gone, most votes is out (a tie is broken at
+  random), and it repeats until one is left. Anyone who joins mid-round gets
+  a vote at the end.
+- Only the host adds or removes movies, starts and ends rounds, skips
+  someone who's away (they lose that cut), and can count the votes early if
+  someone wanders off.
 - No accounts. Friends just type their name.
 
 It's a plain static site (HTML, CSS, one JS module) with no build step.
