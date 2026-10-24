@@ -14,6 +14,7 @@ const TMDB = "https://api.themoviedb.org/3";
 const IMG = "https://image.tmdb.org/t/p/";
 const BLANK_GAME = { phase: "lobby", order: [], turn: 0, cuts: {}, pool: [], round: 0, winner: null };
 const CODE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ";
+const MAX_MOVIES = 100;
 
 /* ================= Backends ================= */
 
@@ -95,7 +96,11 @@ const inPlay = () => (game().phase === "lobby" ? movies() : (game().pool || []).
 const remaining = () => inPlay().filter((m) => !game().cuts?.[m.id]);
 const order = () => game().order || [];
 const turnPlayer = () => (order().length ? order()[(game().turn || 0) % order().length] : null);
+const nextTurn = (g) => ((g.turn || 0) + 1) % Math.max(1, (g.order || []).length);
 const joined = () => !!room?.players?.[me];
+const hostId = () => room?.meta?.createdBy || null;
+const isHost = () => !!me && hostId() === me;
+const full = () => movies().length >= MAX_MOVIES;
 const myTurn = () => game().phase === "playing" && joined() && (turnPlayer() === me || !turnPlayer());
 const nameOf = (id, fallback) => (id === me ? "You" : room?.players?.[id]?.name || fallback || "Someone");
 
@@ -144,7 +149,7 @@ function render() {
   if (!room) { $("#status").innerHTML = `Room <span class="code">${esc(code)}</span> · connecting…`; return; }
 
   const g = game(), list = inPlay(), cuts = g.cuts || {}, rem = remaining();
-  const tail = g.phase === "lobby" ? `${list.length} movie${list.length === 1 ? "" : "s"} · ${players().length} in the crew`
+  const tail = g.phase === "lobby" ? `${list.length} of ${MAX_MOVIES} movies · ${players().length} in the crew`
     : g.phase === "playing" ? `Round ${g.round || 1} · ${rem.length} of ${list.length} left`
     : `Round ${g.round || 1} · decided`;
   $("#status").innerHTML = `Room <span class="code">${esc(code)}</span> · ${esc(tail)}`;
@@ -157,12 +162,14 @@ function render() {
     const gone = !room.players?.[id];
     const name = nameOf(id);
     const ord = g.phase === "playing" && !benched ? `<span class="ord">${order().indexOf(id) + 1}</span>` : "";
-    const note = benched ? ' <span class="ord">next round</span>' : gone ? ' <span class="ord">left</span>' : "";
+    const note = (id === hostId() ? ' <span class="ord">host</span>' : "") + (benched ? ' <span class="ord">next round</span>' : gone ? ' <span class="ord">left</span>' : "");
     return `<span class="chip${g.phase === "playing" && id === tp ? " turn" : ""}"><span class="dot" style="--h:${hashHue(id)}">${esc((room.players?.[id]?.name || "?")[0].toUpperCase())}</span>${ord}<span class="nm">${esc(name)}</span>${note}</span>`;
   }).join("") + (joined() ? "" : `<button class="btn primary small" data-act="join">Join the crew</button>`);
 
   // add
-  $("#addSection").hidden = g.phase !== "lobby";
+  $("#addSection").hidden = g.phase !== "lobby" || !isHost();
+  $("#addLabel").textContent = full() ? `The wall is full (${MAX_MOVIES} movies)` : "Add to the lineup";
+  $("#searchInput").disabled = full();
 
   // winner
   const feat = $("#feature");
@@ -189,7 +196,9 @@ function render() {
   if (!list.length) {
     grid.innerHTML = "";
     empty.hidden = false;
-    empty.innerHTML = "<strong>The wall is empty</strong>Search for a movie above. Anyone in the room can add more.";
+    empty.innerHTML = isHost()
+      ? `<strong>The wall is empty</strong>Search for movies above, up to ${MAX_MOVIES}. Your friends will see them here when they join.`
+      : `<strong>The wall is empty</strong>${esc(nameOf(hostId(), "The host"))} is still picking the movies.`;
   } else {
     empty.hidden = true;
     grid.innerHTML = list.map((m, i) => {
@@ -206,7 +215,7 @@ function render() {
           <button class="btn danger" type="button" data-cut="${m.id}">Cut it</button>
           <button class="btn keep" type="button" data-keep>Keep</button></div>
         <div class="meta"><b>${esc(m.title)}</b><span>${esc(sub) || "&nbsp;"}</span></div>
-        ${g.phase === "lobby" ? `<div class="tools"><button type="button" data-remove="${m.id}">Remove</button></div>` : ""}
+        ${g.phase === "lobby" && isHost() ? `<div class="tools"><button type="button" data-remove="${m.id}">Remove</button></div>` : ""}
       </article>`;
     }).join("");
     grid.querySelectorAll("img").forEach((img) => img.addEventListener("error", () => {
@@ -224,19 +233,25 @@ function renderDock() {
   let title = "", sub = "", buttons = "";
   if (g.phase === "lobby") {
     const n = movies().length;
-    title = n < 2 ? "Add at least 2 movies" : `${n} movies ready`;
-    sub = joined() ? "Start when everyone's in. Turn order is shuffled." : "Join the crew to take part.";
-    buttons = `<button class="btn primary" data-act="start" ${n < 2 || busy ? "disabled" : ""}>Start cutting</button>`;
+    const host = nameOf(hostId(), "the host");
+    if (isHost()) {
+      title = n < 2 ? "Add at least 2 movies" : `${n} movies ready`;
+      sub = "Share the room code, then start when everyone's in. Turn order is shuffled.";
+      buttons = `<button class="btn primary" data-act="start" ${n < 2 || busy ? "disabled" : ""}>Start cutting</button>`;
+    } else {
+      title = `Waiting for ${host}`;
+      sub = joined() ? `${host} picks the movies and starts the game.` : "Join the crew to take part.";
+    }
   } else if (g.phase === "playing") {
     const tp = turnPlayer(), left = remaining().length;
     if (myTurn()) { dock.classList.add("myturn"); title = "Your cut"; sub = `Tap a poster to cut it. ${left} left.`; }
-    else { title = tp ? `${nameOf(tp)}'s cut` : "Anyone's cut"; sub = joined() ? `${left} left. Hang tight.` : `${left} left. You'll play next round.`; }
-    if (joined()) buttons = `${tp && tp !== me ? `<button class="btn" data-act="skip">Skip ${esc(nameOf(tp))}</button>` : ""}<button class="btn" data-act="lobby">End round</button>`;
+    else { title = tp ? `${nameOf(tp)}'s cut` : "Anyone's cut"; sub = joined() ? `${left} left. Hang tight.` : `${left} left. Join the crew to jump in.`; }
+    if (isHost()) buttons = `${tp && tp !== me ? `<button class="btn" data-act="skip">Skip ${esc(nameOf(tp))}</button>` : ""}<button class="btn" data-act="lobby">End round</button>`;
   } else {
     const w = byId(g.winner) || remaining()[0];
     title = w ? `Watch ${w.title}` : "Round over";
-    sub = "Enjoy the movie. The lineup stays for next time.";
-    buttons = `<button class="btn primary" data-act="again">Play again</button>${w ? `<button class="btn" data-act="watched">Remove it &amp; play again</button>` : ""}`;
+    sub = isHost() ? "Enjoy the movie. The lineup stays for next time." : `Enjoy the movie. ${nameOf(hostId(), "The host")} can start another round.`;
+    if (isHost()) buttons = `<button class="btn primary" data-act="again">Play again</button>${w ? `<button class="btn" data-act="watched">Remove it &amp; play again</button>` : ""}`;
   }
   $("#dockMsg").innerHTML = `<b>${esc(title)}</b><span>${esc(sub)}</span>`;
   $("#dockAct").innerHTML = buttons;
@@ -257,11 +272,12 @@ async function search(q) {
   const have = room?.movies || {};
   const rows = (data.results || []).slice(0, 8).map((r) => {
     const on = !!have["t" + r.id];
+    const blocked = on || full();
     const year = (r.release_date || "").slice(0, 4);
-    return `<li><button type="button" data-tmdb="${r.id}" ${on ? "disabled" : ""}>
+    return `<li><button type="button" data-tmdb="${r.id}" ${blocked ? "disabled" : ""}>
       ${r.poster_path ? `<img class="thumb" alt="" src="${esc(poster(r.poster_path, "w92"))}">` : '<span class="thumb"></span>'}
       <span class="t"><b>${esc(r.title)}</b><span>${esc(year || "Year unknown")}</span></span>
-      <span class="add">${on ? "On the wall" : "Add"}</span></button></li>`;
+      <span class="add">${on ? "On the wall" : blocked ? "Wall full" : "Add"}</span></button></li>`;
   });
   box.hidden = false;
   box.innerHTML = rows.length ? rows.join("") : `<li class="note">No movies match “${esc(q)}”.</li>` + custom;
@@ -270,7 +286,9 @@ async function search(q) {
 async function addFromTmdb(id) {
   clearSearch();
   const key = "t" + id;
+  if (!isHost()) return;
   if (room?.movies?.[key]) return toast("That one's already on the wall.");
+  if (full()) return toast(`The wall is full. Remove a movie to add another (max ${MAX_MOVIES}).`);
   try {
     const d = await tmdb(`/movie/${id}`, { append_to_response: "credits" });
     const director = (d.credits?.crew || []).filter((c) => c.job === "Director").map((c) => c.name).slice(0, 2).join(" & ");
@@ -285,7 +303,8 @@ async function addFromTmdb(id) {
 async function addCustom(title) {
   clearSearch();
   title = title.trim().replace(/\s+/g, " ").slice(0, 80);
-  if (!title) return;
+  if (!title || !isHost()) return;
+  if (full()) return toast(`The wall is full. Remove a movie to add another (max ${MAX_MOVIES}).`);
   if (movies().some((m) => m.title.toLowerCase() === title.toLowerCase())) return toast(`${title} is already on the wall.`);
   const key = "c" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   await guard(() => be.set(`rooms/${code}/movies/${key}`, { title, addedBy: me, addedAt: Date.now() }));
@@ -296,12 +315,25 @@ function clearSearch() { $("#searchInput").value = ""; searchSeq++; $("#results"
 /* ================= Game actions ================= */
 
 const roomPath = (p = "") => `rooms/${code}${p ? "/" + p : ""}`;
-const joinRoom = () => be.set(roomPath("players/" + me), { name: myName() || "Someone", joinedAt: Date.now() });
+async function joinRoom() {
+  await be.set(roomPath("players/" + me), { name: myName() || "Someone", joinedAt: Date.now() });
+  await seatLatecomer(code);
+}
+// Someone arriving mid-round goes to the back of the turn order.
+function seatLatecomer(c) {
+  return be.txn(`rooms/${c}/game`, (g) => {
+    if (!g) return g;
+    if (g.phase !== "playing" || (g.order || []).includes(me)) return;
+    g.order = [...(g.order || []), me];
+    g.turn = (g.turn || 0) % Math.max(1, g.order.length - 1);
+    return g;
+  });
+}
 
 const actions = {
   join: () => guard(joinRoom),
   start: () => guard(async () => {
-    if (movies().length < 2) return;
+    if (!isHost() || movies().length < 2) return;
     if (!joined()) await joinRoom();
     const crew = [...new Set([...players().map((p) => p.id), me])];
     for (let i = crew.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [crew[i], crew[j]] = [crew[j], crew[i]]; }
@@ -310,7 +342,7 @@ const actions = {
   skip: () => guard(() => be.txn(roomPath("game"), (g) => {
     if (!g) return g;
     if (g.phase !== "playing") return;
-    g.turn = (g.turn || 0) + 1; return g;
+    g.turn = nextTurn(g); return g;
   })),
   lobby: () => guard(() => be.set(roomPath("game"), { ...BLANK_GAME, round: game().round || 0 })),
   again: () => guard(() => be.set(roomPath("game"), { ...BLANK_GAME, round: game().round || 0 })),
@@ -331,7 +363,7 @@ async function cut(id) {
       g.cuts = g.cuts || {};
       if (g.phase !== "playing" || (tp && tp !== me) || g.cuts[id]) return;
       g.cuts[id] = { by: me, name: myName() || "Someone", n: Object.keys(g.cuts).length + 1, at: Date.now() };
-      g.turn = (g.turn || 0) + 1;
+      g.turn = nextTurn(g);
       const left = (g.pool || []).filter((m) => !g.cuts[m]);
       if (left.length <= 1) { g.phase = "done"; g.winner = left[0] || null; }
       return g;
@@ -378,6 +410,7 @@ async function joinByCode(c) {
   const meta = await be.get(`rooms/${c}/meta`);
   if (!meta) return toast(`There's no room with the code ${c}.`);
   await be.set(`rooms/${c}/players/${me}`, { name: myName() || "Someone", joinedAt: Date.now() });
+  await seatLatecomer(c);
   enterRoom(c);
 }
 

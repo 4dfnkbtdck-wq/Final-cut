@@ -3,9 +3,13 @@
 Put the movies up on the wall. Take turns cutting one each. The last poster
 standing is what you watch tonight.
 
-- Search movies with real posters (from TMDB).
-- Everyone plays on their own phone: start a room, share the 4-letter code
-  or the invite link, and every cut shows up for everyone live.
+- The host starts a room and picks up to 100 movies, searching TMDB for real
+  posters.
+- Friends join with the 4-letter code or the invite link and play on their
+  own phones. Every cut shows up for everyone live. Anyone who joins mid-round
+  goes to the back of the turn order.
+- Only the host adds or removes movies, starts and ends rounds, and skips
+  someone who's away.
 - No accounts. Friends just type their name.
 
 It's a plain static site (HTML, CSS, one JS module) with no build step.
