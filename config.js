@@ -8,4 +8,12 @@ export const TMDB_API_KEY = "e516490d4fa5f4dca11b71621dd54b81";
 // Firebase console → Project settings → Your apps → Web app → SDK setup and configuration.
 // Replace null with the object Firebase shows you, e.g.
 // { apiKey: "...", authDomain: "...", databaseURL: "...", projectId: "...", appId: "..." }
-export const FIREBASE_CONFIG = null;
+export const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyDA3B8EcTSW-cu6o_n-qBzakAzsGm5li6I",
+  authDomain: "final-cut-c46c9.firebaseapp.com",
+  databaseURL: "https://final-cut-c46c9-default-rtdb.firebaseio.com",
+  projectId: "final-cut-c46c9",
+  storageBucket: "final-cut-c46c9.firebasestorage.app",
+  messagingSenderId: "628926754429",
+  appId: "1:628926754429:web:1dd9ee09018d8442b14b14",
+};
