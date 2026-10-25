@@ -101,8 +101,7 @@ const hostId = () => room?.meta?.createdBy || null;
 const isHost = () => !!me && hostId() === me;
 const full = () => movies().length >= MAX_MOVIES;
 const myTurn = () => game().phase === "playing" && joined() && turnPlayer() === me;
-const hostPick = () => game().phase === "voting" && !!game().vote?.hostPick;
-const canVote = () => game().phase === "voting" && joined() && !hostPick();
+const canVote = () => game().phase === "voting" && joined();
 const banned = () => game().vote?.banned?.[me] || null;
 const ballots = () => game().vote?.ballots || {};
 const voters = () => players().map((p) => p.id);
@@ -111,8 +110,8 @@ const split = (movieCount, playerCount) => {
   const quota = playerCount ? Math.floor((movieCount - 1) / playerCount) : 0;
   return { quota, toVote: movieCount - quota * playerCount };
 };
-const cutLabel = (c) => (c.by === "vote" ? `${c.votes} vote${c.votes === 1 ? "" : "s"}${c.tie ? " · tied" : ""}`
-  : c.by === "host" ? `${nameOf(c.host, "host")}'s call` : nameOf(c.by, c.name));
+const cutLabel = (c) => (c.by === "vote" ? (c.random ? "random draw" : `${c.votes} vote${c.votes === 1 ? "" : "s"}${c.tie ? " · tied" : ""}`)
+  : nameOf(c.by, c.name));
 const nameOf = (id, fallback) => (id === me ? "You" : room?.players?.[id]?.name || fallback || "Someone");
 
 /* ================= UI helpers ================= */
@@ -190,8 +189,7 @@ function render() {
   if (win) {
     const log = Object.entries(cuts).sort((a, b) => a[1].n - b[1].n).map(([id, c]) =>
       `<li><span class="n">${c.n}</span><span><b>${esc(byId(id)?.title || "A removed movie")}</b>, ${c.by === "vote"
-        ? `voted out (${c.votes} of ${c.of} votes${c.tie ? ", tied for most" : ""})`
-        : c.by === "host" ? `cut by ${esc(nameOf(c.host, "the host"))} after a tied revote`
+        ? (c.random ? "drawn at random after the revote tied too" : `voted out (${c.votes} of ${c.of} votes${c.tie ? ", tied for most" : ""})`)
         : `cut by ${esc(nameOf(c.by, c.name))}`}</span></li>`).join("");
     feat.hidden = false;
     feat.innerHTML = `<div class="feature">
@@ -209,8 +207,7 @@ function render() {
   // wall
   const grid = $("#grid"), empty = $("#empty");
   const voting = g.phase === "voting";
-  const deciding = hostPick() && isHost();
-  const live = (myTurn() || canVote() || deciding) && !busy;
+  const live = (myTurn() || canVote()) && !busy;
   const mine = ballots()[me], last = banned();
   if (!list.length) {
     grid.innerHTML = "";
@@ -238,7 +235,6 @@ function render() {
         </button>
         <div class="confirm"><p>${canVote() ? "Vote to cut" : "Cut"} ${esc(m.title)}?</p>
           ${canVote() ? `<button class="btn danger" type="button" data-vote="${m.id}">Vote</button>`
-            : deciding ? `<button class="btn danger" type="button" data-hostcut="${m.id}">Cut it</button>`
             : `<button class="btn danger" type="button" data-cut="${m.id}">Cut it</button>`}
           <button class="btn keep" type="button" data-keep>Keep</button></div>
         <div class="meta"><b>${esc(m.title)}</b><span>${esc(sub) || "&nbsp;"}</span></div>
@@ -291,18 +287,13 @@ function renderDock() {
     const b = ballots(), v = voters(), n = v.filter((id) => b[id]).length;
     const mineTitle = byId(b[me])?.title;
     const revote = !!g.vote?.revote, lastTitle = byId(banned())?.title;
-    if (hostPick()) {
-      if (isHost()) { dock.classList.add("myturn"); title = "Your call"; sub = "The revote tied too. Tap the movie that goes."; }
-      else { title = `${nameOf(hostId(), "The host")} breaks the tie`; sub = "The revote tied too, so the host picks which one goes."; }
-    } else {
-      if (canVote() && !mineTitle) dock.classList.add("myturn");
-      title = revote ? "Revote: they all tied" : "Vote: which one goes?";
-      const rule = revote ? (lastTitle ? `You can't pick ${lastTitle} again. ` : "Pick a different movie than last time. ") : "Most votes is out. ";
-      sub = !joined() ? "Join the crew to vote." : mineTitle
-        ? `You voted to cut ${mineTitle}. ${n} of ${v.length} voted. Tap another to change.`
-        : `Tap the one you want gone. ${rule}${n} of ${v.length} voted.`;
-    }
-    if (isHost()) buttons = `${!hostPick() && n > 0 && n < v.length ? `<button class="btn" data-act="count">Count votes now</button>` : ""}<button class="btn" data-act="lobby">End round</button>`;
+    if (canVote() && !mineTitle) dock.classList.add("myturn");
+    title = revote ? "Revote: they all tied" : "Vote: which one goes?";
+    const rule = revote ? (lastTitle ? `You can't pick ${lastTitle} again. ` : "Pick a different movie than last time. ") : "Most votes is out. ";
+    sub = !joined() ? "Join the crew to vote." : mineTitle
+      ? `You voted to cut ${mineTitle}. ${n} of ${v.length} voted. Tap another to change.`
+      : `Tap the one you want gone. ${rule}${n} of ${v.length} voted.`;
+    if (isHost()) buttons = `${n > 0 && n < v.length ? `<button class="btn" data-act="count">Count votes now</button>` : ""}<button class="btn" data-act="lobby">End round</button>`;
   } else {
     const w = byId(g.winner) || remaining()[0];
     title = w ? `Watch ${w.title}` : "Round over";
@@ -427,21 +418,6 @@ async function cut(id) {
   });
 }
 
-async function hostCut(id) {
-  pending = null;
-  if (!hostPick() || !isHost()) return;
-  await guard(() => be.txn(roomPath("game"), (x) => {
-    if (!x) return x;
-    x.cuts = x.cuts || {};
-    if (x.phase !== "voting" || !x.vote?.hostPick || x.cuts[id] || !(x.pool || []).includes(id)) return;
-    x.cuts[id] = { by: "host", host: me, n: Object.keys(x.cuts).length + 1, at: Date.now() };
-    const left = (x.pool || []).filter((m) => !x.cuts[m]);
-    if (left.length <= 1) { x.phase = "done"; x.winner = left[0] || null; x.vote = null; }
-    else x.vote = { round: x.vote.round + 1, ballots: {} };
-    return x;
-  }));
-}
-
 async function castVote(id) {
   pending = null;
   if (!canVote() || game().cuts?.[id]) return;
@@ -454,18 +430,18 @@ async function castVote(id) {
 // host forces it). Most votes is out, and if several movies tie for most, they
 // all go. If every movie still standing ties, there's a revote where nobody
 // may pick the movie they just voted for; if that ties across the board too,
-// the host picks. Every phone may try this at once, so the transaction only
+// one is drawn at random, since there's no other way to settle it. Every phone may try this at once, so the transaction only
 // goes through for the vote round it saw.
 async function tally(force) {
   const g = game();
-  if (g.phase !== "voting" || !g.vote || g.vote.hostPick) return;
+  if (g.phase !== "voting" || !g.vote) return;
   const b = ballots(), v = voters();
   const ready = force ? Object.keys(b).length > 0 : v.length > 0 && v.every((id) => b[id]);
   if (!ready) return;
   const round = g.vote.round;
   await be.txn(roomPath("game"), (x) => {
     if (!x) return x;
-    if (x.phase !== "voting" || x.vote?.round !== round || x.vote.hostPick) return;
+    if (x.phase !== "voting" || x.vote?.round !== round) return;
     x.cuts = x.cuts || {};
     const standing = (x.pool || []).filter((m) => !x.cuts[m]);
     const cast = x.vote.ballots || {};
@@ -477,14 +453,17 @@ async function tally(force) {
     if (!ids.length) return;
     const top = Math.max(...ids.map((id) => counts[id]));
     const tied = ids.filter((id) => counts[id] === top);
-    if (tied.length === standing.length) {
-      x.vote = x.vote.revote
-        ? { round: round + 1, hostPick: true }
-        : { round: round + 1, ballots: {}, revote: true, banned: { ...cast } };
+    const total = Object.keys(cast).length;
+    if (tied.length === standing.length && !x.vote.revote) {
+      x.vote = { round: round + 1, ballots: {}, revote: true, banned: { ...cast } };
       return x;
     }
-    const total = Object.keys(cast).length;
-    for (const id of tied) x.cuts[id] = { by: "vote", n: Object.keys(x.cuts).length + 1, at: Date.now(), votes: top, of: total, tie: tied.length > 1 };
+    if (tied.length === standing.length) {
+      const out = standing[Math.floor(Math.random() * standing.length)];
+      x.cuts[out] = { by: "vote", random: true, n: Object.keys(x.cuts).length + 1, at: Date.now(), votes: top, of: total };
+    } else {
+      for (const id of tied) x.cuts[id] = { by: "vote", n: Object.keys(x.cuts).length + 1, at: Date.now(), votes: top, of: total, tie: tied.length > 1 };
+    }
     const left = standing.filter((m) => !x.cuts[m]);
     if (left.length <= 1) { x.phase = "done"; x.winner = left[0] || null; x.vote = null; }
     else x.vote = { round: round + 1, ballots: {} };
@@ -572,7 +551,7 @@ document.addEventListener("click", (e) => {
   if (d.tmdb) return addFromTmdb(d.tmdb);
   if (d.custom !== undefined) return addCustom(d.custom);
   if (d.pick) {
-    if (!(myTurn() || canVote() || (hostPick() && isHost())) || game().cuts?.[d.pick]) return;
+    if (!(myTurn() || canVote()) || game().cuts?.[d.pick]) return;
     if (canVote() && banned() === d.pick) return toast("You picked that one last time. Choose a different movie.");
     pending = pending === d.pick ? null : d.pick; render();
     document.querySelector(`[data-cut="${d.pick}"]`)?.focus();
@@ -580,7 +559,6 @@ document.addEventListener("click", (e) => {
   }
   if (d.cut) return cut(d.cut);
   if (d.vote) return castVote(d.vote);
-  if (d.hostcut) return hostCut(d.hostcut);
   if ("keep" in d) { pending = null; return render(); }
   if (d.remove) return guard(() => be.remove(roomPath("movies/" + d.remove)));
 });
