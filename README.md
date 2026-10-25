@@ -9,9 +9,11 @@ standing is what you watch tonight.
   own phones. Every cut shows up for everyone live.
 - Cuts are exactly equal. With 100 movies and 8 players everyone gets 12
   cuts (96 in total). The last 4 then go to elimination votes: everyone
-  votes for the one they want gone, most votes is out (a tie is broken at
-  random), and it repeats until one is left. Anyone who joins mid-round gets
-  a vote at the end.
+  votes for the one they want gone and most votes is out. If several movies
+  tie for most votes, they all go. If every movie still standing ties,
+  there's a revote where nobody can pick the movie they just voted for, and
+  if that ties across the board too, the host makes the call. It repeats
+  until one is left. Anyone who joins mid-round gets a vote at the end.
 - Only the host adds or removes movies, starts and ends rounds, skips
   someone who's away (they lose that cut), and can count the votes early if
   someone wanders off.
