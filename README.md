@@ -12,7 +12,9 @@ standing is what you watch tonight.
   votes for the one they want gone and most votes is out. If several movies
   tie for most votes, they all go. If every movie still standing ties,
   there's a revote where nobody can pick the movie they just voted for, and
-  if that ties across the board too, one is drawn at random. It repeats
+  if that ties across the board too, one is drawn at random. With two
+  movies left and everyone voted, a tie goes straight to the draw, since a
+  revote would only flip the votes. It repeats
   until one is left. Anyone who joins mid-round gets a vote at the end.
 - Only the host adds or removes movies, starts and ends rounds, skips
   someone who's away (they lose that cut), and can count the votes early if

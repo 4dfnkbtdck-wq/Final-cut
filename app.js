@@ -189,7 +189,7 @@ function render() {
   if (win) {
     const log = Object.entries(cuts).sort((a, b) => a[1].n - b[1].n).map(([id, c]) =>
       `<li><span class="n">${c.n}</span><span><b>${esc(byId(id)?.title || "A removed movie")}</b>, ${c.by === "vote"
-        ? (c.random ? "drawn at random after the revote tied too" : `voted out (${c.votes} of ${c.of} votes${c.tie ? ", tied for most" : ""})`)
+        ? (c.random ? "drawn at random to break a tie" : `voted out (${c.votes} of ${c.of} votes${c.tie ? ", tied for most" : ""})`)
         : `cut by ${esc(nameOf(c.by, c.name))}`}</span></li>`).join("");
     feat.hidden = false;
     feat.innerHTML = `<div class="feature">
@@ -429,8 +429,8 @@ async function castVote(id) {
 // Counts the vote once everyone in the room has voted (or right away when the
 // host forces it). Most votes is out, and if several movies tie for most, they
 // all go. If every movie still standing ties, there's a revote where nobody
-// may pick the movie they just voted for; if that ties across the board too,
-// one is drawn at random, since there's no other way to settle it. Every phone may try this at once, so the transaction only
+// may pick the movie they just voted for; if that ties across the board too
+// (or a revote couldn't change anything), one is drawn at random. Every phone may try this at once, so the transaction only
 // goes through for the vote round it saw.
 async function tally(force) {
   const g = game();
@@ -454,7 +454,11 @@ async function tally(force) {
     const top = Math.max(...ids.map((id) => counts[id]));
     const tied = ids.filter((id) => counts[id] === top);
     const total = Object.keys(cast).length;
-    if (tied.length === standing.length && !x.vote.revote) {
+    // With two movies left, a revote can't change anything if everyone already
+    // voted: each person has to switch, so the tie just flips. Skip straight to
+    // the draw. Someone who didn't vote this time could still break it, though.
+    const flipOnly = standing.length === 2 && v.every((id) => cast[id]);
+    if (tied.length === standing.length && !x.vote.revote && !flipOnly) {
       x.vote = { round: round + 1, ballots: {}, revote: true, banned: { ...cast } };
       return x;
     }
