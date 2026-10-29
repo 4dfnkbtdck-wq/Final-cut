@@ -102,6 +102,15 @@ input::placeholder { color: var(--muted); }
 .split { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
 .or { color: var(--muted); font-size: 14px; }
 .join { display: flex; gap: 8px; flex: 1 1 180px; min-width: 0; }
+.panel .hint { text-transform: none; letter-spacing: 0; font-family: var(--body); }
+.panel .note { margin: -6px 0 0; color: var(--muted); font-size: 13px; }
+input.pin { font-family: var(--mono); letter-spacing: .4em; max-width: 160px; }
+.host-panel { border: 1px dashed var(--line); border-radius: 6px; padding: 12px 14px; display: grid; gap: 10px; }
+.host-panel p { margin: 0; color: var(--muted); }
+.host-panel b { color: var(--fg); }
+.host-panel form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.host-panel.bare { border: 0; padding: 0; }
+.host-panel .linkish { background: none; border: 0; padding: 0; color: var(--muted); text-decoration: underline; font-size: 14px; justify-self: start; }
 .join input { text-transform: uppercase; letter-spacing: .3em; font-family: var(--mono); max-width: 140px; }
 
 /* Players */

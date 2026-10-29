@@ -185,6 +185,8 @@ function render() {
     return `<span class="chip${g.phase === "playing" && id === tp ? " turn" : ""}"><span class="dot" style="--h:${hashHue(id)}">${esc((room.players?.[id]?.name || "?")[0].toUpperCase())}</span>${ord}<span class="nm">${esc(name)}</span>${note}</span>`;
   }).join("") + (joined() ? "" : `<button class="btn primary small" data-act="join">Join the crew</button>`);
 
+  renderHostPanel();
+
   // add
   $("#addSection").hidden = g.phase !== "lobby" || !isHost();
   $("#addLabel").textContent = full() ? `The wall is full (${MAX_MOVIES} movies)` : "Add to the lineup";
@@ -255,6 +257,54 @@ function render() {
   }
   Object.keys(cuts).forEach((id) => seenCuts.add(id));
   renderDock();
+}
+
+let claimOpen = false;
+function renderHostPanel() {
+  const panel = $("#hostPanel");
+  let html = "";
+  if (isHost() && !room.pinSet) {
+    html = `<p><b>Set a host PIN.</b> If your phone ever forgets you, you can use it to get your host controls back.</p>
+      <form data-form="setpin"><input class="pin" id="setPinInput" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" placeholder="4 digits" aria-label="Host PIN" autocomplete="off"><button class="btn small primary" type="submit">Save PIN</button></form>`;
+  } else if (!isHost() && room.pinSet && joined()) {
+    html = claimOpen
+      ? `<p><b>Are you the host?</b> Enter the room's host PIN to get your host controls back.</p>
+        <form data-form="claim"><input class="pin" id="claimPinInput" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" placeholder="PIN" aria-label="Host PIN" autocomplete="off"><button class="btn small primary" type="submit">Take over hosting</button><button class="btn small ghost" type="button" data-act="claimclose">Cancel</button></form>`
+      : `<button class="linkish" type="button" data-act="claimopen">I'm the host</button>`;
+  }
+  // Re-rendering would wipe a PIN someone is typing, so only touch the panel when its state changes.
+  const key = html.slice(0, 40);
+  if (panel.dataset.key !== key) { panel.innerHTML = html; panel.dataset.key = key; }
+  panel.hidden = !html;
+  panel.classList.toggle("bare", !!html && !claimOpen && !isHost());
+}
+
+const validPin = (p) => /^[0-9]{4}$/.test(p);
+
+// The PIN lives where nobody can read it. The database rules only let someone
+// take over hosting after they've written a matching guess under their own id.
+async function savePin(c, pin) {
+  await be.set(`hostpins/${c}`, { pin });
+  await be.set(`rooms/${c}/pinSet`, true);
+}
+
+async function claimHost(pin) {
+  if (!validPin(pin)) return toast("The PIN is 4 digits.");
+  try {
+    await be.set(`claims/${code}/${me}`, pin);
+    if (DEMO) {
+      const real = (await be.get(`hostpins/${code}`))?.pin;
+      if (real !== pin) throw new Error("wrong pin");
+    }
+    await be.set(roomPath("meta/createdBy"), me);
+    claimOpen = false;
+    toast("You're the host again.");
+  } catch (e) {
+    console.error(e);
+    toast("That PIN doesn't match.");
+  } finally {
+    be.remove(`claims/${code}/${me}`).catch(() => {});
+  }
 }
 
 function renderDock() {
@@ -383,6 +433,8 @@ function afterTurn(g) {
 
 const actions = {
   join: () => guard(joinRoom),
+  claimopen: () => { claimOpen = true; render(); $("#claimPinInput")?.focus(); },
+  claimclose: () => { claimOpen = false; render(); },
   start: () => guard(async () => {
     if (!isHost() || movies().length < 2) return;
     if (!joined()) await joinRoom();
@@ -510,10 +562,17 @@ function leaveRoom() {
 }
 
 async function createRoom() {
+  const pin = $("#pinInput").value.trim();
+  if (!validPin(pin)) { $("#pinInput").focus(); return toast("Pick a 4-digit host PIN to start a room."); }
   for (let tries = 0; tries < 8; tries++) {
     const c = Array.from({ length: 4 }, () => CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)]).join("");
     const ok = await be.txn(`rooms/${c}/meta`, (m) => (m ? undefined : { createdAt: Date.now(), createdBy: me }));
-    if (ok) { await be.set(`rooms/${c}/players/${me}`, { name: myName(), joinedAt: Date.now() }); return enterRoom(c); }
+    if (ok) {
+      await be.set(`rooms/${c}/players/${me}`, { name: myName(), joinedAt: Date.now() });
+      await savePin(c, pin).catch((e) => { console.error(e); toast("Room made, but the PIN didn't save. You can set it in the room."); });
+      $("#pinInput").value = "";
+      return enterRoom(c);
+    }
   }
   toast("Couldn't make a room. Try again.");
 }
@@ -541,6 +600,16 @@ $("#rejoinBtn").addEventListener("click", () => {
   if (!last) return;
   if (!myName()) { $("#codeInput").value = last; $("#nameInput").focus(); return toast("Add your name first."); }
   joinByCode(last).catch((e) => { failConn(e); store.set("fc-last-room", ""); render(); });
+});
+$("#hostPanel").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const form = e.target.dataset.form;
+  if (form === "setpin") {
+    const pin = $("#setPinInput").value.trim();
+    if (!validPin(pin)) return toast("The PIN is 4 digits.");
+    guard(async () => { await savePin(code, pin); toast("Host PIN saved."); });
+  }
+  if (form === "claim") claimHost($("#claimPinInput").value.trim());
 });
 $("#joinBtn").addEventListener("click", () => { if (saveName()) joinByCode($("#codeInput").value).catch(failConn); });
 $("#codeInput").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $("#joinBtn").click(); } });

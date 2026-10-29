@@ -5,7 +5,36 @@
     "rooms": {
       "$code": {
         ".read": "auth != null",
-        ".write": "auth != null && $code.matches(/^[A-Z]{4}$/)"
+        ".validate": "$code.matches(/^[A-Z]{4}$/)",
+        "meta": {
+          ".write": "auth != null && !data.exists() && newData.child('createdBy').val() === auth.uid",
+          "createdBy": {
+            ".write": "auth != null && newData.val() === auth.uid && (data.val() === auth.uid || (root.child('hostpins').child($code).child('pin').exists() && root.child('claims').child($code).child(auth.uid).val() === root.child('hostpins').child($code).child('pin').val()))"
+          }
+        },
+        "players": {
+          "$uid": { ".write": "auth != null" }
+        },
+        "movies": {
+          ".write": "auth != null && root.child('rooms').child($code).child('meta').child('createdBy').val() === auth.uid"
+        },
+        "game": {
+          ".write": "auth != null"
+        },
+        "pinSet": {
+          ".write": "auth != null && root.child('rooms').child($code).child('meta').child('createdBy').val() === auth.uid"
+        }
+      }
+    },
+    "hostpins": {
+      "$code": {
+        ".write": "auth != null && root.child('rooms').child($code).child('meta').child('createdBy').val() === auth.uid",
+        ".validate": "newData.child('pin').isString() && newData.child('pin').val().matches(/^[0-9]{4}$/)"
+      }
+    },
+    "claims": {
+      "$code": {
+        "$uid": { ".write": "auth != null && auth.uid === $uid" }
       }
     }
   }

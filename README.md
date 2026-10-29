@@ -20,6 +20,11 @@ standing is what you watch tonight.
   someone who's away (they lose that cut), and can count the votes early if
   someone wanders off.
 - No accounts. Friends just type their name.
+- The host sets a 4-digit host PIN when starting a room. If their phone ever
+  forgets them (a new phone, cleared data, or Safari's 7-day cleanup), they
+  rejoin with the room code, tap **I'm the host**, and enter the PIN to get
+  host controls back. The PIN is stored where no player can read it; the
+  database rules check it.
 
 It's a plain static site (HTML, CSS, one JS module) with no build step.
 

@@ -40,6 +40,9 @@
       <form id="nameForm" class="panel" autocomplete="off">
         <label class="label" for="nameInput">Your name</label>
         <input id="nameInput" maxlength="24" placeholder="What your friends call you" required>
+        <label class="label" for="pinInput">Host PIN <span class="hint">· only when starting a room</span></label>
+        <input id="pinInput" class="pin" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" placeholder="4 digits" autocomplete="off">
+        <p class="note">You'll use it to get your host controls back on another phone, or if your phone forgets you.</p>
         <div class="split">
           <button class="btn primary" type="submit" id="createBtn">Start a room</button>
           <span class="or">or join one</span>
@@ -53,6 +56,7 @@
 
     <!-- Room -->
     <section id="room" class="room" hidden>
+      <section id="hostPanel" class="host-panel" hidden></section>
       <section aria-labelledby="castLabel">
         <h2 class="label" id="castLabel">Tonight's crew</h2>
         <div class="cast" id="cast"></div>
