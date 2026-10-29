@@ -155,7 +155,14 @@ function render() {
   $("#room").hidden = !inRoom;
   $("#roomTools").hidden = !inRoom;
   $("#dock").hidden = !inRoom;
-  if (!inRoom) { $("#status").textContent = DEMO ? "Demo mode · this device only" : "Ready when you are"; return; }
+  if (!inRoom) {
+    $("#status").textContent = DEMO ? "Demo mode · this device only" : "Ready when you are";
+    // Opening the app from the Home Screen always starts here, so offer the last room back.
+    const last = store.get("fc-last-room");
+    $("#rejoinBtn").hidden = !last || !be;
+    if (last) $("#rejoinBtn").textContent = `Back to room ${last}`;
+    return;
+  }
   if (!room) { $("#status").innerHTML = `Room <span class="code">${esc(code)}</span> · connecting…`; return; }
 
   const g = game(), list = inPlay(), cuts = g.cuts || {}, rem = remaining();
@@ -478,6 +485,7 @@ async function tally(force) {
 /* ================= Rooms ================= */
 
 function enterRoom(c) {
+  store.set("fc-last-room", c);
   code = c; room = null; pending = null; seenCuts.clear();
   setURL(c);
   if (unwatch) unwatch();
@@ -495,6 +503,7 @@ function enterRoom(c) {
 }
 
 function leaveRoom() {
+  store.set("fc-last-room", "");
   if (unwatch) unwatch();
   unwatch = null; code = null; room = null;
   setURL(null); render();
@@ -527,6 +536,12 @@ function saveName() {
 }
 
 $("#nameForm").addEventListener("submit", (e) => { e.preventDefault(); if (saveName()) createRoom().catch(failConn); });
+$("#rejoinBtn").addEventListener("click", () => {
+  const last = store.get("fc-last-room");
+  if (!last) return;
+  if (!myName()) { $("#codeInput").value = last; $("#nameInput").focus(); return toast("Add your name first."); }
+  joinByCode(last).catch((e) => { failConn(e); store.set("fc-last-room", ""); render(); });
+});
 $("#joinBtn").addEventListener("click", () => { if (saveName()) joinByCode($("#codeInput").value).catch(failConn); });
 $("#codeInput").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $("#joinBtn").click(); } });
 $("#leaveBtn").addEventListener("click", async () => {

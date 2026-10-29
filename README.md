@@ -23,6 +23,17 @@ standing is what you watch tonight.
 
 It's a plain static site (HTML, CSS, one JS module) with no build step.
 
+## Put it on your iPhone Home Screen
+
+Open the site in **Safari**, tap **Share**, then **Add to Home Screen**. It
+opens full-screen with its own icon, like an app. Opening it from the Home
+Screen always starts on the first screen, with a **Back to room** button for
+the last room you were in.
+
+The Home Screen app keeps its own storage, separate from Safari, so it counts
+as a different player. If you're hosting, create the room from the same place
+you'll play from.
+
 ## Try it without any setup
 
 Open `index.html?demo` (for example `https://<you>.github.io/final-cut/?demo`).

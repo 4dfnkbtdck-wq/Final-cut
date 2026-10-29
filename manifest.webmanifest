@@ -1,0 +1,15 @@
+{
+  "name": "Final Cut",
+  "short_name": "Final Cut",
+  "description": "Put the movies up on the wall. Take turns cutting one each. The last poster standing is what you watch tonight.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#12141c",
+  "theme_color": "#12141c",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
