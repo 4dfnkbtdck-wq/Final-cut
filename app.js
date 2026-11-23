@@ -389,11 +389,18 @@ async function search(q) {
   const custom = `<li><button type="button" data-custom="${esc(q)}"><span class="thumb"></span><span class="t"><b>Add “${esc(q)}”</b><span>without a poster</span></span><span class="add">Add</span></button></li>`;
   if (!TMDB_API_KEY) { box.hidden = false; box.innerHTML = custom + `<li class="note">Add a TMDB key in config.js to search with posters.</li>`; return; }
   let data;
-  try { data = await tmdb("/search/movie", { query: q, include_adult: "false" }); }
+  try {
+    // "Spider-Man 1977" or "Spider-Man (1977)" narrows to that year. A title that
+    // happens to end in a year ("Blade Runner 2049") still works: with no match
+    // for that year, search the whole thing as typed.
+    const m = q.match(/^(.*\S)\s+\(?((?:18|19|20)\d{2})\)?$/);
+    if (m) data = await tmdb("/search/movie", { query: m[1], year: m[2], include_adult: "false" });
+    if (!data?.results?.length) data = await tmdb("/search/movie", { query: q, include_adult: "false" });
+  }
   catch { if (seq === searchSeq) { box.hidden = false; box.innerHTML = `<li class="note">Search isn't working right now. Check the TMDB key in config.js.</li>` + custom; } return; }
   if (seq !== searchSeq) return;
   const have = room?.movies || {};
-  const rows = (data.results || []).slice(0, 8).map((r) => {
+  const rows = (data.results || []).slice(0, 20).map((r) => {
     const on = !!have["t" + r.id];
     const blocked = on || full();
     const year = (r.release_date || "").slice(0, 4);
@@ -403,7 +410,9 @@ async function search(q) {
       <span class="add">${on ? "On the wall" : blocked ? "Wall full" : "Add"}</span></button></li>`;
   });
   box.hidden = false;
-  box.innerHTML = rows.length ? rows.join("") : `<li class="note">No movies match “${esc(q)}”.</li>` + custom;
+  const more = (data.total_results || 0) > rows.length
+    ? `<li class="note">Showing ${rows.length} of ${data.total_results}. Not here? Add the year it came out after the title.</li>` : "";
+  box.innerHTML = rows.length ? rows.join("") + more : `<li class="note">No movies match “${esc(q)}”.</li>` + custom;
 }
 
 async function addFromTmdb(id) {
