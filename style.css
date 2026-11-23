@@ -127,6 +127,12 @@ input.pin { font-family: var(--mono); letter-spacing: .4em; max-width: 160px; }
   background: hsl(var(--h) 55% 42%);
 }
 .chip .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip.kickable { padding-right: 4px; }
+.chip-x {
+  width: 26px; height: 26px; border-radius: 50%; border: 0; flex: none;
+  background: var(--bg); color: var(--muted); font-size: 17px; line-height: 1; padding: 0;
+}
+.chip-x:hover { color: var(--cut-ink); background: var(--cut); }
 .chip.turn { border-color: var(--bulb); box-shadow: 0 0 0 2px var(--bulb) inset; }
 .chip .ord { font: 500 11px var(--mono); color: var(--muted); }
 

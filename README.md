@@ -16,6 +16,9 @@ standing is what you watch tonight.
   movies left and everyone voted, a tie goes straight to the draw, since a
   revote would only flip the votes. It repeats
   until one is left. Anyone who joins mid-round gets a vote at the end.
+- Before starting, the host can remove people from the crew (no-shows, or a
+  friend listed twice because their phone forgot them; duplicates show when
+  each one joined).
 - Only the host adds or removes movies, starts and ends rounds, skips
   someone who's away (they lose that cut), and can count the votes early if
   someone wanders off.

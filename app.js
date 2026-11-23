@@ -175,6 +175,10 @@ function render() {
   // crew
   const ids = g.phase === "lobby" ? players().map((p) => p.id) : [...order(), ...players().map((p) => p.id).filter((p) => !order().includes(p))];
   const tp = turnPlayer();
+  // Two people with the same name are usually one friend whose phone forgot them; the join date tells them apart.
+  const nameCount = {};
+  for (const p of players()) nameCount[p.name] = (nameCount[p.name] || 0) + 1;
+  const kickable = g.phase === "lobby" && isHost();
   $("#cast").innerHTML = ids.map((id) => {
     const benched = g.phase !== "lobby" && !order().includes(id);
     const gone = !room.players?.[id];
@@ -182,7 +186,11 @@ function render() {
     const ord = g.phase === "playing" && !benched ? `<span class="ord">${order().indexOf(id) + 1}</span>` : "";
     const voted = g.phase === "voting" && ballots()[id] ? ' <span class="ord">voted</span>' : "";
     const note = (id === hostId() ? ' <span class="ord">host</span>' : "") + voted + (gone ? ' <span class="ord">left</span>' : benched && g.phase === "playing" ? ' <span class="ord">votes at the end</span>' : "");
-    return `<span class="chip${g.phase === "playing" && id === tp ? " turn" : ""}"><span class="dot" style="--h:${hashHue(id)}">${esc((room.players?.[id]?.name || "?")[0].toUpperCase())}</span>${ord}<span class="nm">${esc(name)}</span>${note}</span>`;
+    const p = room.players?.[id];
+    const twin = g.phase === "lobby" && p && nameCount[p.name] > 1 && p.joinedAt
+      ? ` <span class="ord">joined ${new Date(p.joinedAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>` : "";
+    const kick = kickable && id !== me && p ? `<button class="chip-x" type="button" data-kick="${id}" aria-label="Remove ${esc(name)}">×</button>` : "";
+    return `<span class="chip${g.phase === "playing" && id === tp ? " turn" : ""}${kick ? " kickable" : ""}"><span class="dot" style="--h:${hashHue(id)}">${esc((p?.name || "?")[0].toUpperCase())}</span>${ord}<span class="nm">${esc(name)}</span>${note}${twin}${kick}</span>`;
   }).join("") + (joined() ? "" : `<button class="btn primary small" data-act="join">Join the crew</button>`);
 
   renderHostPanel();
@@ -649,6 +657,11 @@ document.addEventListener("click", (e) => {
   if (d.vote) return castVote(d.vote);
   if ("keep" in d) { pending = null; return render(); }
   if (d.remove) return guard(() => be.remove(roomPath("movies/" + d.remove)));
+  if (d.kick) {
+    if (!isHost() || game().phase !== "lobby" || d.kick === me) return;
+    const who = nameOf(d.kick);
+    return guard(async () => { await be.remove(roomPath("players/" + d.kick)); toast(`Removed ${who}. They can rejoin with the room code.`); });
+  }
 });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && pending) { pending = null; render(); } });
 document.addEventListener("pointerdown", (e) => { if (!e.target.closest(".search")) $("#results").hidden = true; });
