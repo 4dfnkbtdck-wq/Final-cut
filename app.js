@@ -88,7 +88,17 @@ let pending = null, busy = false, searchSeq = 0;
 const seenCuts = new Set();
 
 const myName = () => store.get("fc-name") || "";
-const movies = () => Object.entries(room?.movies || {}).map(([id, m]) => ({ id, ...m })).sort((a, b) => (a.addedAt || 0) - (b.addedAt || 0));
+// The host picks how the wall is sorted; it's kept with the game so everyone sees the same order.
+const sortTitle = (t) => String(t || "").replace(/^(the|a|an)\s+/i, "");
+const byYear = (dir) => (a, b) => (!a.year) - (!b.year) || dir * ((+a.year || 0) - (+b.year || 0)) || sortTitle(a.title).localeCompare(sortTitle(b.title));
+const SORTS = {
+  added: (a, b) => (a.addedAt || 0) - (b.addedAt || 0),
+  title: (a, b) => sortTitle(a.title).localeCompare(sortTitle(b.title), undefined, { numeric: true, sensitivity: "base" }),
+  newest: byYear(-1),
+  oldest: byYear(1),
+};
+const sortKey = () => (SORTS[room?.game?.sort] ? room.game.sort : "added");
+const movies = () => Object.entries(room?.movies || {}).map(([id, m]) => ({ id, ...m })).sort(SORTS[sortKey()]);
 const players = () => Object.entries(room?.players || {}).map(([id, p]) => ({ id, ...p })).sort((a, b) => (a.joinedAt || 0) - (b.joinedAt || 0));
 const game = () => ({ ...BLANK_GAME, ...(room?.game || {}) });
 const byId = (id) => (room?.movies?.[id] ? { id, ...room.movies[id] } : null);
@@ -199,6 +209,7 @@ function render() {
   $("#addSection").hidden = g.phase !== "lobby" || !isHost();
   $("#addLabel").textContent = full() ? `The wall is full (${MAX_MOVIES} movies)` : "Add to the lineup";
   $("#searchInput").disabled = full();
+  document.querySelectorAll("[data-sort]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.sort === sortKey())));
 
   // winner
   const feat = $("#feature");
@@ -450,7 +461,7 @@ const actions = {
     for (let i = crew.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [crew[i], crew[j]] = [crew[j], crew[i]]; }
     const { quota } = split(movies().length, crew.length);
     await be.set(roomPath("game"), {
-      ...BLANK_GAME, order: crew, quota, pool: movies().map((m) => m.id), round: (game().round || 0) + 1, startedAt: Date.now(),
+      ...BLANK_GAME, sort: sortKey(), order: crew, quota, pool: movies().map((m) => m.id), round: (game().round || 0) + 1, startedAt: Date.now(),
       ...(quota ? { phase: "playing" } : { phase: "voting", vote: { round: 1, ballots: {} } }),
     });
   }),
@@ -460,11 +471,11 @@ const actions = {
     return afterTurn(g);
   })),
   count: () => guard(() => tally(true)),
-  lobby: () => guard(() => be.set(roomPath("game"), { ...BLANK_GAME, round: game().round || 0 })),
-  again: () => guard(() => be.set(roomPath("game"), { ...BLANK_GAME, round: game().round || 0 })),
+  lobby: () => guard(() => be.set(roomPath("game"), { ...BLANK_GAME, sort: sortKey(), round: game().round || 0 })),
+  again: () => guard(() => be.set(roomPath("game"), { ...BLANK_GAME, sort: sortKey(), round: game().round || 0 })),
   watched: () => guard(async () => {
     const w = game().winner;
-    await be.set(roomPath("game"), { ...BLANK_GAME, round: game().round || 0 });
+    await be.set(roomPath("game"), { ...BLANK_GAME, sort: sortKey(), round: game().round || 0 });
     if (w) await be.remove(roomPath("movies/" + w));
   }),
 };
@@ -657,6 +668,10 @@ document.addEventListener("click", (e) => {
   if (d.vote) return castVote(d.vote);
   if ("keep" in d) { pending = null; return render(); }
   if (d.remove) return guard(() => be.remove(roomPath("movies/" + d.remove)));
+  if (d.sort) {
+    if (!isHost() || game().phase !== "lobby" || !SORTS[d.sort] || d.sort === sortKey()) return;
+    return guard(() => be.update(roomPath("game"), { sort: d.sort }));
+  }
   if (d.kick) {
     if (!isHost() || game().phase !== "lobby" || d.kick === me) return;
     const who = nameOf(d.kick);

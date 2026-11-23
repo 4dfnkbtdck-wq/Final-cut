@@ -16,6 +16,9 @@ standing is what you watch tonight.
   movies left and everyone voted, a tie goes straight to the draw, since a
   revote would only flip the votes. It repeats
   until one is left. Anyone who joins mid-round gets a vote at the end.
+- The host can sort the wall by order added, A–Z (ignoring "The", "A" and
+  "An"), newest or oldest. Everyone sees that order, and it holds during
+  the game.
 - Before starting, the host can remove people from the crew (no-shows, or a
   friend listed twice because their phone forgot them; duplicates show when
   each one joined).
